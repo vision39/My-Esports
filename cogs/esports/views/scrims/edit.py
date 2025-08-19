@@ -1,10 +1,12 @@
 import discord
 import asyncio
 from core.Bot import ME
-from models.esports.scrims import Scrim
-from ...helper.time_parser import parse_time
 
-# --- NEW: A simple view for Yes/No confirmation ---
+
+from models.esports.scrims import Scrim
+from ...helper.time_parser import parse_time, IST
+
+
 class ConfirmView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=60.0)
@@ -20,22 +22,23 @@ class ConfirmView(discord.ui.View):
         self.value = False
         self.stop()
 
-
 class ScrimEditView(discord.ui.View):
     """An interactive view for editing an existing scrim."""
 
-    def __init__(self, bot: ME, scrim: Scrim):
+    def __init__(self, bot: ME, scrim: Scrim, original_interaction: discord.Interaction):
         super().__init__(timeout=180.0)
         self.bot = bot
         self.scrim = scrim
+        self.original_interaction = original_interaction
         
-        # --- UPDATED: Pre-populate data from the database ---
+        guild = self.bot.get_guild(scrim.guild_id)
+        
         self.data = {
-            "Name": "ME Scrims", # Default value as requested
+            "Name": "ME Scrims",
             "Registration Channel": self.bot.get_channel(scrim.reg_channel_id) or "Not-Set",
-            "Slotlist Channel": "Not-Set", # Placeholder - field doesn't exist in model yet
-            "Success Role": "Not-Set", # Placeholder - field doesn't exist in model yet
-            "Mentions": 4, # Placeholder - field doesn't exist in model yet
+            "Slotlist Channel": self.bot.get_channel(scrim.slotlist_channel_id) or "Not-Set",
+            "Success Role": guild.get_role(scrim.success_role_id) if guild else "Not-Set",
+            "Mentions": 4, # Placeholder
             "Slots": scrim.total_slots,
             "Open Time": scrim.scrim_time.strftime("%I:%M %p"),
             "Reactions": "✅, ❌", # Placeholder
@@ -48,7 +51,7 @@ class ScrimEditView(discord.ui.View):
             "Autodelete Late Messages": "Yes!", # Placeholder
             "Slotlist Start from": 1, # Placeholder
             "Autoclean": "4:00 AM (Channel, Role)", # Placeholder
-            "Scrim Days": "Mo, Tu, We, Th, Fr, Sa, Su", # Placeholder
+            "Scrim Days": scrim.scrim_days,
             "Required Lines": "Not set", # Placeholder
             "Duplicate / Fake Tags": ";; Allowed", # Placeholder
         }
@@ -91,6 +94,27 @@ class ScrimEditView(discord.ui.View):
         
         embed.set_footer(text="Page - 1/1")
         return embed
+    
+    async def _return_to_dashboard(self, interaction: discord.Interaction):
+        """A helper function to build and send the main scrim manager dashboard."""
+        from .manager import ScrimManagerView
+        scrims = await Scrim.filter(guild_id=interaction.guild.id).order_by("scrim_time")
+        
+        if not scrims:
+            description = "Click `Create Scrim` button for new scrim."
+        else:
+            lines = []
+            for i, s in enumerate(scrims, 1):
+                ist_time = s.scrim_time.astimezone(IST)
+                time_str = ist_time.strftime('%I:%M %p IST')
+                lines.append(f"{i:02}. <:positive:1397965897498628166> : <#{s.reg_channel_id}> - {time_str}")
+            description = "\n".join(lines) + "\n\nClick the `Create Scrim` button to start a new scrim."
+
+        embed = self.bot.embed(title="Scrims Manager", description=description)
+        embed.set_footer(text=f"Total Scrims in this server: {len(scrims)}", icon_url=interaction.user.display_avatar.url)
+        
+        view = ScrimManagerView(self.bot, scrims_exist=bool(scrims))
+        await self.original_interaction.edit_original_response(embed=embed, view=view)
 
     async def placeholder_callback(self, interaction: discord.Interaction):
         await interaction.response.send_message("This edit function is not yet implemented.", ephemeral=True)
@@ -181,26 +205,40 @@ class ScrimEditView(discord.ui.View):
         """Asks for confirmation and deletes the scrim if confirmed."""
         confirm_view = ConfirmView()
         confirm_embed = self.bot.embed(
-            title="<a:alert:1397932055555215461> Are you sure?",
+            title="⚠️ Are you sure?",
             description=f"This will permanently delete the scrim **{self.scrim.title}**.\nThis action cannot be undone."
         )
         
-        # Send the confirmation message
         await interaction.response.send_message(embed=confirm_embed, view=confirm_view, ephemeral=True)
-        
-        # Wait for the user to click "Yes" or "No"
         await confirm_view.wait()
         
         if confirm_view.value is True:
-            # If they clicked "Yes", delete the scrim
             await self.scrim.delete()
             await interaction.followup.send("Scrim has been deleted.", ephemeral=True)
-            # You might want to return to the main dashboard here as well
+            await self._return_to_dashboard(interaction)
         else:
-            # If they clicked "No" or the view timed out, just notify them.
             await interaction.followup.send("Deletion cancelled.", ephemeral=True)
-
 
     @discord.ui.button(label="Save Changes", style=discord.ButtonStyle.success, row=4)
     async def save_changes(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        """Saves the edited data to the database."""
+        self.scrim.title = self.data["Name"]
+        self.scrim.total_slots = self.data["Slots"]
+        self.scrim.scrim_days = self.data["Scrim Days"]
+        
+        if isinstance(self.data["Registration Channel"], discord.TextChannel):
+            self.scrim.reg_channel_id = self.data["Registration Channel"].id
+        if isinstance(self.data["Slotlist Channel"], discord.TextChannel):
+            self.scrim.slotlist_channel_id = self.data["Slotlist Channel"].id
+        if isinstance(self.data["Success Role"], discord.Role):
+            self.scrim.success_role_id = self.data["Success Role"].id
+            
+        try:
+            self.scrim.scrim_time = parse_time(self.data["Open Time"])
+        except ValueError as e:
+            return await interaction.response.send_message(f"Error in Open Time: {e}", ephemeral=True)
+
+        await self.scrim.save()
+        
+        await interaction.response.send_message("✅ Changes saved successfully!", ephemeral=True)
+        await self._return_to_dashboard(interaction)

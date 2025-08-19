@@ -32,16 +32,11 @@ class ScrimManagerView(discord.ui.View):
     @discord.ui.button(label="Edit Settings", style=discord.ButtonStyle.primary, row=0)
     async def edit_settings(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Displays a dropdown to select a scrim to edit."""
-        # 1. Fetch all scrims for the server
         scrims = await Scrim.filter(guild_id=interaction.guild.id).order_by("scrim_time")
         
-        # This button is disabled if no scrims exist, so we don't need an extra check here.
-
-        # 2. Create the selector view and a prompt embed
-        selector_view = ScrimSelectorView(self.bot, scrims)
+        selector_view = ScrimSelectorView(self.bot, scrims, original_interaction=interaction)
         prompt_embed = self.bot.embed(description="Please select a scrim to edit from the dropdown below.")
         
-        # 3. Edit the message to show the dropdown
         await interaction.response.edit_message(embed=prompt_embed, view=selector_view)
 
 

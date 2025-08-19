@@ -13,8 +13,6 @@ class Scrim(Model):
     # --- Scrim Details ---
     title = fields.CharField(max_length=200)
     scrim_time = fields.DatetimeField()
-    
-    # --- NEW FIELD ---
     scrim_days = fields.CharField(max_length=100, default="Mo, Tu, We, Th, Fr, Sa, Su")
     
     # --- Registration Details ---
@@ -22,21 +20,23 @@ class Scrim(Model):
     is_open = fields.BooleanField(default=True)
     
     # --- Channel and Message IDs ---
-    reg_channel_id = fields.BigIntField(null=True, description="The channel where the registration message is posted")
-    reg_message_id = fields.BigIntField(null=True, description="The ID of the registration message itself")
-    log_channel_id = fields.BigIntField(null=True, description="The channel for sending registration logs")
+    reg_channel_id = fields.BigIntField(null=True)
+    slotlist_channel_id = fields.BigIntField(null=True) # <-- NEW FIELD
+    reg_message_id = fields.BigIntField(null=True)
+    log_channel_id = fields.BigIntField(null=True)
 
     # --- Role IDs ---
-    ping_role_id = fields.BigIntField(null=True, description="The role to ping when registration opens")
+    ping_role_id = fields.BigIntField(null=True)
+    success_role_id = fields.BigIntField(null=True) # <-- NEW FIELD
     
     # --- Data Storage (JSON) ---
-    registered_teams = fields.JSONField(default=list, description="A list of all registered teams")
-    reserves = fields.JSONField(default=list, description="A list of reserve teams")
-    banned_users = fields.JSONField(default=list, description="A list of users banned from this scrim")
+    registered_teams = fields.JSONField(default=list)
+    reserves = fields.JSONField(default=list)
+    banned_users = fields.JSONField(default=list)
 
     # --- Customization Fields ---
-    open_message = fields.TextField(null=True, default="Registration is now open!", description="Custom message for when registration opens")
-    dm_message = fields.TextField(null=True, default="You have successfully registered for {scrim_title}.", description="Custom DM message on successful registration")
+    open_message = fields.TextField(null=True, default="Registration is now open!")
+    dm_message = fields.TextField(null=True, default="You have successfully registered for {scrim_title}.")
     
     class Meta:
         table = "scrims"

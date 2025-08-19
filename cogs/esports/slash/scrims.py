@@ -7,7 +7,6 @@ from core.Bot import ME
 from models.esports.scrims import Scrim
 
 # Import the view and the IST timezone helper
-from ..views.scrims.manager import ScrimManagerView
 from ..helper.time_parser import IST
 
 
@@ -21,6 +20,7 @@ class Scrims(commands.Cog, name="Esports"):
     @commands.has_permissions(manage_guild=True)
     async def scrim_manager(self, ctx: commands.Context):
         """Displays the scrim management dashboard."""
+        from ..views.scrims.manager import ScrimManagerView
 
         scrims = await Scrim.filter(guild_id=ctx.guild.id).order_by("scrim_time")
 
