@@ -1,7 +1,12 @@
 # for tortoise-orm
 
-TORTOISE = {}
+SUPABASE_CONNECTION_STRING = ""
 
+SUPABASE_URL = ""
+
+SUPABASE_KEY = ""
+
+TORTOISE = {}
 
 EXTENSIONS = ()
 
