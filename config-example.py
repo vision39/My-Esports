@@ -3,8 +3,6 @@
 TORTOISE = {}
 
 
-POSTGRESQL = {}
-
 EXTENSIONS = ()
 
 DISCORD_TOKEN = ""
