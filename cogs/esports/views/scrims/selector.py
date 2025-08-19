@@ -9,10 +9,21 @@ class ScrimSelect(discord.ui.Select):
     def __init__(self, bot: ME, scrims: list[Scrim], original_interaction: discord.Interaction):
         self.bot = bot
         self.original_interaction = original_interaction
-        options = [
-            discord.SelectOption(label=f"ID: {scrim.id} | {scrim.title}", value=str(scrim.id))
-            for scrim in scrims
-        ]
+        
+        # --- UPDATED LOGIC ---
+        # Build the options for the dropdown menu
+        options = []
+        for scrim in scrims:
+            # Get the channel object from the bot's cache using the stored ID
+            channel = self.bot.get_channel(scrim.reg_channel_id)
+            
+            # Use the channel name if it's found, otherwise use the scrim title as a fallback
+            label_name = channel.name if channel else scrim.title
+            
+            options.append(
+                discord.SelectOption(label=f"ID: {scrim.id} | #{label_name}", value=str(scrim.id))
+            )
+
         super().__init__(placeholder="Select a scrim to edit...", options=options)
 
     async def callback(self, interaction: discord.Interaction):

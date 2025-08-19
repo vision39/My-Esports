@@ -26,17 +26,14 @@ class Scrims(commands.Cog, name="Esports"):
 
         # --- CORRECTED FORMATTING LOGIC ---
         if not scrims:
-            description = "Click `Create Scrim` button for new scrim."
+            description = "```Click `Create Scrim` button for new scrim.```"
         else:
-            lines = []
-            for i, s in enumerate(scrims, 1):
-                # Convert the stored UTC time to IST for display
-                ist_time = s.scrim_time.astimezone(IST)
-                time_str = ist_time.strftime('%I:%M %p IST')
-                lines.append(
-                    f"{i:02}. <:positive:1397965897498628166> : <#{s.reg_channel_id}> - {time_str}"
-                )
-            description = "\n".join(lines) + "\n\nClick the `Create Scrim` button to start a new scrim."
+            lines = [
+                # --- UPDATED: No timezone conversion needed ---
+                f"{i:02}. <:positive:1397965897498628166> : <#{s.reg_channel_id}> - {s.scrim_time.strftime('%I:%M %p')}" 
+                for i, s in enumerate(scrims, 1)
+            ]
+            description = "\n".join(lines)
 
         embed = self.bot.embed(
             title="Scrims Manager",

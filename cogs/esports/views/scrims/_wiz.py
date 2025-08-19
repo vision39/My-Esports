@@ -130,16 +130,14 @@ class ScrimWizardView(discord.ui.View):
         scrims = await Scrim.filter(guild_id=interaction.guild.id).order_by("scrim_time")
         
         if not scrims:
-            description = "Click `Create Scrim` button for new scrim."
+            description = "```Click `Create Scrim` button for new scrim.```"
         else:
-            lines = []
-            for i, s in enumerate(scrims, 1):
-                ist_time = s.scrim_time.astimezone(IST)
-                time_str = ist_time.strftime('%I:%M %p IST')
-                lines.append(
-                    f"{i:02}. <:positive:1397965897498628166> : <#{s.reg_channel_id}> - {time_str}"
-                )
-            description = "\n".join(lines) + "\n\nClick the `Create Scrim` button to start a new scrim."
+            lines = [
+                # --- UPDATED: No timezone conversion needed ---
+                f"{i:02}. <:positive:1397965897498628166> : <#{s.reg_channel_id}> - {s.scrim_time.strftime('%I:%M %p')}" 
+                for i, s in enumerate(scrims, 1)
+            ]
+            description = "\n".join(lines)
 
         embed = self.bot.embed(title="Scrims Manager", description=description)
         embed.set_footer(text=f"Total Scrims in this server: {len(scrims)}", icon_url=interaction.user.display_avatar.url)
@@ -194,7 +192,7 @@ class ScrimWizardView(discord.ui.View):
     async def save_scrim(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Validates and saves the scrim to the database."""
         scrim_time = parse_time(self.data["Open Time"])
-        title = f"Scrim @ {scrim_time.strftime('%I:%M %p')}"
+        title = f"ME Esports"
 
         await Scrim.create(
             guild_id=interaction.guild.id,
@@ -203,6 +201,8 @@ class ScrimWizardView(discord.ui.View):
             scrim_time=scrim_time,
             total_slots=self.data["Total Slots"],
             reg_channel_id=self.data["Reg. Channel"].id,
+            slotlist_channel_id=self.data["Slotlist Channel"].id if isinstance(self.data["Slotlist Channel"], discord.TextChannel) else None,
+            success_role_id=self.data["Success Role"].id if isinstance(self.data["Success Role"], discord.Role) else None,
             scrim_days=self.data["Scrim Days"]
         )
         
