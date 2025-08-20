@@ -1,12 +1,13 @@
 import discord
 from discord.ext import commands
-from datetime import datetime
+import pytz
 
 # Import the main bot class and models
 from core.Bot import ME
 from models.esports.scrims import Scrim
 
 # Import the view and the IST timezone helper
+from ..views.scrims.manager import ScrimManagerView
 from ..helper.time_parser import IST
 
 
@@ -20,19 +21,23 @@ class Scrims(commands.Cog, name="Esports"):
     @commands.has_permissions(manage_guild=True)
     async def scrim_manager(self, ctx: commands.Context):
         """Displays the scrim management dashboard."""
-        from ..views.scrims.manager import ScrimManagerView
 
         scrims = await Scrim.filter(guild_id=ctx.guild.id).order_by("scrim_time")
 
-        # --- CORRECTED FORMATTING LOGIC ---
         if not scrims:
-            description = "```Click `Create Scrim` button for new scrim.```"
+            description = "Click `Create Scrim` button for new scrim."
         else:
-            lines = [
-                # --- UPDATED: No timezone conversion needed ---
-                f"{i:02}. <:positive:1397965897498628166> : <#{s.reg_channel_id}> - {s.scrim_time.strftime('%I:%M %p')}" 
-                for i, s in enumerate(scrims, 1)
-            ]
+            lines = []
+            for i, s in enumerate(scrims, 1):
+                # --- CORRECTED TIME CONVERSION ---
+                # 1. Make the naive datetime from the DB aware that it's UTC
+                utc_time = s.scrim_time.replace(tzinfo=pytz.utc)
+                # 2. Convert it to IST for display
+                ist_time = utc_time.astimezone(IST)
+                time_str = ist_time.strftime('%I:%M %p IST')
+                lines.append(
+                    f"{i:02}. <:positive:1397965897498628166> : <#{s.reg_channel_id}> - {time_str}"
+                )
             description = "\n".join(lines)
 
         embed = self.bot.embed(

@@ -1,11 +1,12 @@
 import discord
 import asyncio
+import pytz
+from datetime import datetime
 from core.Bot import ME
-
-
 from models.esports.scrims import Scrim
 from ...helper.time_parser import parse_time, IST
 
+# --- NEW: Import the manager view to return to it ---
 
 class ConfirmView(discord.ui.View):
     def __init__(self):
@@ -33,14 +34,19 @@ class ScrimEditView(discord.ui.View):
         
         guild = self.bot.get_guild(scrim.guild_id)
         
+        # --- CORRECTED TIME CONVERSION ON LOAD ---
+        utc_time = scrim.scrim_time.replace(tzinfo=pytz.utc)
+        ist_time = utc_time.astimezone(IST)
+        
         self.data = {
-            "Name": "ME Scrims",
+            "Name": scrim.title,
             "Registration Channel": self.bot.get_channel(scrim.reg_channel_id) or "Not-Set",
             "Slotlist Channel": self.bot.get_channel(scrim.slotlist_channel_id) or "Not-Set",
             "Success Role": guild.get_role(scrim.success_role_id) if guild else "Not-Set",
             "Mentions": 4, # Placeholder
             "Slots": scrim.total_slots,
-            "Open Time": scrim.scrim_time.strftime("%I:%M %p"),
+            # Format Open Time as only the time string (e.g., '04:00 AM')
+            "Open Time": ist_time.strftime("%I:%M %p"),
             "Reactions": "✅, ❌", # Placeholder
             "Ping Role": "Not-Set", # Placeholder
             "Open Role": "@everyone", # Placeholder
@@ -55,12 +61,83 @@ class ScrimEditView(discord.ui.View):
             "Required Lines": "Not set", # Placeholder
             "Duplicate / Fake Tags": ";; Allowed", # Placeholder
         }
+        self.save_changes.disabled = False
+
+    def _check_save_button_state(self):
+        """Checks if all required fields are filled and enables/disables the save button."""
+        required_fields = ["Registration Channel", "Slotlist Channel", "Success Role", "Open Time"]
+        self.save_changes.disabled = any(self.data[field] == "Not-Set" for field in required_fields)
+
+    async def update_data(self, interaction: discord.Interaction, key: str, value: any):
+        """Validates input, updates the scrim data, and refreshes the embed."""
+        # --- ADVANCED VALIDATION LOGIC ---
+        if key == "Mentions":
+            if not str(value).isdigit() or not (0 < int(value) <= 10):
+                return await interaction.followup.send("Error: Required mentions must be a number between 1 and 10.", ephemeral=True)
+            value = int(value)
+
+        if key == "Slots":
+            if not str(value).isdigit() or not (0 < int(value) <= 30):
+                return await interaction.followup.send("Error: Total slots must be a number between 1 and 30.", ephemeral=True)
+            value = int(value)
+        
+        if key in ["Registration Channel", "Slotlist Channel"]:
+            if not value.startswith("<#"):
+                return await interaction.followup.send("Error: Please provide a valid channel mention.", ephemeral=True)
+            try:
+                channel_id = int("".join(filter(str.isdigit, str(value))))
+                channel = await self.bot.fetch_channel(channel_id)
+                if not isinstance(channel, discord.TextChannel): raise ValueError()
+                value = channel
+            except (ValueError, discord.NotFound, discord.Forbidden):
+                return await interaction.followup.send("Error: Invalid channel ID or I can't see that channel.", ephemeral=True)
+
+        if key == "Ping Role":
+            if value.lower() == "@everyone":
+                value = interaction.guild.default_role
+            elif not value.startswith("<@&"):
+                return await interaction.followup.send("Error: Please provide a valid role mention or '@everyone'.", ephemeral=True)
+            else:
+                try:
+                    role_id = int("".join(filter(str.isdigit, str(value))))
+                    role = interaction.guild.get_role(role_id)
+                    if not role: raise ValueError()
+                    value = role
+                except (ValueError, TypeError):
+                     return await interaction.followup.send("Error: Invalid role ID.", ephemeral=True)
+        
+        if key in ["Success Role", "Open Role"]:
+            if not value.startswith("<@&"):
+                return await interaction.followup.send("Error: Please provide a valid role mention.", ephemeral=True)
+            try:
+                role_id = int("".join(filter(str.isdigit, str(value))))
+                role = interaction.guild.get_role(role_id)
+                if not role: raise ValueError()
+                value = role
+            except (ValueError, TypeError):
+                 return await interaction.followup.send("Error: Invalid role ID.", ephemeral=True)
+        
+        if key == "Open Time":
+            try:
+                parse_time(value)
+            except ValueError as e:
+                return await interaction.followup.send(f"Error: {e}", ephemeral=True)
+
+        self.data[key] = value
+        
+        # Auto-update Slotlist Channel when Reg. Channel is set
+        if key == "Registration Channel":
+            self.data["Slotlist Channel"] = value
+
+        self._check_save_button_state()
+        new_embed = await self.build_embed()
+        await interaction.edit_original_response(embed=new_embed, view=self)
 
     async def build_embed(self) -> discord.Embed:
         """Builds the embed based on the current data."""
         embed = self.bot.embed(
             title="Scrims Editor - Edit Settings",
-            description="" # Description is now built from fields
+            description=""
         )
         
         def format_field(key):
@@ -70,7 +147,6 @@ class ScrimEditView(discord.ui.View):
             else:
                 return f"`{value}`"
 
-        # --- NEW EMBED LAYOUT ---
         embed.add_field(name="🇦 Name:", value=format_field('Name'), inline=True)
         embed.add_field(name="🇧 Registration Channel:", value=format_field('Registration Channel'), inline=True)
         embed.add_field(name="🇨 Slotlist Channel:", value=format_field('Slotlist Channel'), inline=True)
@@ -94,10 +170,32 @@ class ScrimEditView(discord.ui.View):
         
         embed.set_footer(text="Page - 1/1")
         return embed
-    
+
+    async def _get_chat_input(self, interaction: discord.Interaction, key: str):
+        """Helper function to wait for and process chat input."""
+        prompt_embed = discord.Embed(
+            description=f"Please send the new value for **{key}** in the chat.",
+            color=self.bot.config.COLOR
+        )
+        prompt = await interaction.channel.send(embed=prompt_embed)
+        await interaction.response.defer()
+
+        try:
+            message = await self.bot.wait_for("message", timeout=60.0, check=lambda m: m.author == interaction.user and m.channel == interaction.channel)
+        except asyncio.TimeoutError:
+            await prompt.delete()
+            return await interaction.followup.send("You took too long to respond.", ephemeral=True)
+
+        await prompt.delete()
+        try: await message.delete()
+        except discord.NotFound: pass
+
+        await self.update_data(interaction, key, message.content)
+
     async def _return_to_dashboard(self, interaction: discord.Interaction):
         """A helper function to build and send the main scrim manager dashboard."""
         from .manager import ScrimManagerView
+        
         scrims = await Scrim.filter(guild_id=interaction.guild.id).order_by("scrim_time")
         
         if not scrims:
@@ -116,89 +214,86 @@ class ScrimEditView(discord.ui.View):
         view = ScrimManagerView(self.bot, scrims_exist=bool(scrims))
         await self.original_interaction.edit_original_response(embed=embed, view=view)
 
-    async def placeholder_callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message("This edit function is not yet implemented.", ephemeral=True)
-
     # --- BUTTONS (A-T) ---
     @discord.ui.button(label="A", style=discord.ButtonStyle.secondary, row=0)
     async def set_a(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Name")
 
     @discord.ui.button(label="B", style=discord.ButtonStyle.secondary, row=0)
     async def set_b(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Registration Channel")
 
     @discord.ui.button(label="C", style=discord.ButtonStyle.secondary, row=0)
     async def set_c(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Slotlist Channel")
 
     @discord.ui.button(label="D", style=discord.ButtonStyle.secondary, row=0)
     async def set_d(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Success Role")
 
     @discord.ui.button(label="E", style=discord.ButtonStyle.secondary, row=0)
     async def set_e(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Mentions")
 
     @discord.ui.button(label="F", style=discord.ButtonStyle.secondary, row=1)
     async def set_f(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Slots")
 
     @discord.ui.button(label="G", style=discord.ButtonStyle.secondary, row=1)
     async def set_g(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Open Time")
 
     @discord.ui.button(label="H", style=discord.ButtonStyle.secondary, row=1)
     async def set_h(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Reactions")
 
     @discord.ui.button(label="I", style=discord.ButtonStyle.secondary, row=1)
     async def set_i(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Ping Role")
 
     @discord.ui.button(label="J", style=discord.ButtonStyle.secondary, row=1)
     async def set_j(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Open Role")
 
     @discord.ui.button(label="K", style=discord.ButtonStyle.secondary, row=2)
     async def set_k(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Multi-Register")
 
     @discord.ui.button(label="L", style=discord.ButtonStyle.secondary, row=2)
     async def set_l(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Team Compulsion")
 
     @discord.ui.button(label="M", style=discord.ButtonStyle.secondary, row=2)
     async def set_m(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Duplicate Team Name")
 
     @discord.ui.button(label="N", style=discord.ButtonStyle.secondary, row=2)
     async def set_n(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Autodelete Rejected")
 
     @discord.ui.button(label="O", style=discord.ButtonStyle.secondary, row=2)
     async def set_o(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Autodelete Late Messages")
 
     @discord.ui.button(label="P", style=discord.ButtonStyle.secondary, row=3)
     async def set_p(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Slotlist Start from")
 
     @discord.ui.button(label="Q", style=discord.ButtonStyle.secondary, row=3)
     async def set_q(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Autoclean")
 
     @discord.ui.button(label="R", style=discord.ButtonStyle.secondary, row=3)
     async def set_r(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Scrim Days")
 
     @discord.ui.button(label="S", style=discord.ButtonStyle.secondary, row=3)
     async def set_s(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Required Lines")
 
     @discord.ui.button(label="T", style=discord.ButtonStyle.secondary, row=3)
     async def set_t(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.placeholder_callback(interaction)
+        await self._get_chat_input(interaction, "Duplicate / Fake Tags")
 
     @discord.ui.button(label="Delete", style=discord.ButtonStyle.danger, row=4)
     async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -232,6 +327,8 @@ class ScrimEditView(discord.ui.View):
             self.scrim.slotlist_channel_id = self.data["Slotlist Channel"].id
         if isinstance(self.data["Success Role"], discord.Role):
             self.scrim.success_role_id = self.data["Success Role"].id
+        if isinstance(self.data["Ping Role"], discord.Role):
+            self.scrim.ping_role_id = self.data["Ping Role"].id
             
         try:
             self.scrim.scrim_time = parse_time(self.data["Open Time"])

@@ -1,10 +1,9 @@
 import discord
 import asyncio
+import pytz
 from core.Bot import ME
 from models.esports.scrims import Scrim
 from ...helper.time_parser import parse_time, IST
-
-# Import the Day Selector View
 from ._days import DaySelectorView
 
 class ScrimWizardView(discord.ui.View):
@@ -130,14 +129,18 @@ class ScrimWizardView(discord.ui.View):
         scrims = await Scrim.filter(guild_id=interaction.guild.id).order_by("scrim_time")
         
         if not scrims:
-            description = "```Click `Create Scrim` button for new scrim.```"
+            description = "Click `Create Scrim` button for new scrim."
         else:
-            lines = [
-                # --- UPDATED: No timezone conversion needed ---
-                f"{i:02}. <:positive:1397965897498628166> : <#{s.reg_channel_id}> - {s.scrim_time.strftime('%I:%M %p')}" 
-                for i, s in enumerate(scrims, 1)
-            ]
-            description = "\n".join(lines)
+            lines = []
+            for i, s in enumerate(scrims, 1):
+                # --- CORRECTED TIME CONVERSION ---
+                utc_time = s.scrim_time.replace(tzinfo=pytz.utc)
+                ist_time = utc_time.astimezone(IST)
+                time_str = ist_time.strftime('%I:%M %p IST')
+                lines.append(
+                    f"{i:02}. <:positive:1397965897498628166> : <#{s.reg_channel_id}> - {time_str}"
+                )
+            description = "\n".join(lines) + "\n\nClick the `Create Scrim` button to start a new scrim."
 
         embed = self.bot.embed(title="Scrims Manager", description=description)
         embed.set_footer(text=f"Total Scrims in this server: {len(scrims)}", icon_url=interaction.user.display_avatar.url)
@@ -192,7 +195,7 @@ class ScrimWizardView(discord.ui.View):
     async def save_scrim(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Validates and saves the scrim to the database."""
         scrim_time = parse_time(self.data["Open Time"])
-        title = f"ME Esports"
+        title = f"Scrim @ {scrim_time.strftime('%I:%M %p')}"
 
         await Scrim.create(
             guild_id=interaction.guild.id,
